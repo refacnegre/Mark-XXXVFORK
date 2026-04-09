@@ -9,8 +9,8 @@ def get_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-BASE_DIR    = get_base_dir()
-CONFIG_DIR  = BASE_DIR / "config"
+BASE_DIR = get_base_dir()
+CONFIG_DIR = BASE_DIR / "config"
 CONFIG_FILE = CONFIG_DIR / "api_keys.json"
 
 
@@ -22,7 +22,7 @@ def config_exists() -> bool:
     return CONFIG_FILE.exists()
 
 
-def save_api_keys(gemini_api_key: str) -> None:
+def save_api_keys(minimax_api_key: str, gemini_api_key: str | None = None) -> None:
     ensure_config_dir()
 
     data: dict = {}
@@ -32,12 +32,11 @@ def save_api_keys(gemini_api_key: str) -> None:
         except Exception:
             data = {}
 
-    data["gemini_api_key"] = gemini_api_key.strip()
+    data["minimax_api_key"] = minimax_api_key.strip()
+    if gemini_api_key is not None:
+        data["gemini_api_key"] = gemini_api_key.strip()
 
-    CONFIG_FILE.write_text(
-        json.dumps(data, indent=2),
-        encoding="utf-8"
-    )
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def load_api_keys() -> dict:
@@ -50,10 +49,14 @@ def load_api_keys() -> dict:
         return {}
 
 
+def get_minimax_key() -> str | None:
+    return load_api_keys().get("minimax_api_key")
+
+
 def get_gemini_key() -> str | None:
     return load_api_keys().get("gemini_api_key")
 
 
 def is_configured() -> bool:
-    key = get_gemini_key()
+    key = get_minimax_key()
     return bool(key and len(key) > 15)
