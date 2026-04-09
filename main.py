@@ -4,6 +4,7 @@ import json
 import sys
 import traceback
 import re
+import time
 from pathlib import Path
 
 from ui import JarvisUI
@@ -451,11 +452,39 @@ class JarvisLive:
         self.pending_user_text: asyncio.Queue[str] | None = None
 
         self.messages: list[dict] = []
+        self._last_stt_text = ""
+        self._last_stt_time = 0.0
+        self._ignore_stt_until = 0.0
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.pending_user_text:
             return
         asyncio.run_coroutine_threadsafe(self.pending_user_text.put(text), self._loop)
+
+    def _should_queue_stt_text(self, text: str) -> bool:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return False
+
+        now = time.monotonic()
+        if now < self._ignore_stt_until:
+            _log(f"🚫 Ignoring STT during startup window: {cleaned!r}")
+            return False
+
+        # Whisper can emit bracketed hallucinations from background noise
+        # (e.g. "[MÜZİK]", "[MÜZİK ÇALI]"). Ignore those chunks.
+        if "[" in cleaned or "]" in cleaned:
+            _log(f"🚫 Ignoring bracketed STT artifact: {cleaned!r}")
+            return False
+
+        normalized = re.sub(r"\s+", " ", cleaned.casefold())
+        if normalized == self._last_stt_text and (now - self._last_stt_time) < 4.0:
+            _log(f"🚫 Ignoring duplicate STT text: {cleaned!r}")
+            return False
+
+        self._last_stt_text = normalized
+        self._last_stt_time = now
+        return True
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
@@ -661,7 +690,7 @@ class JarvisLive:
                 _log("🧹 Dropping captured STT text because assistant started speaking")
                 continue
 
-            if user_text:
+            if user_text and self._should_queue_stt_text(user_text):
                 _log(f"🎙️ STT captured text: {user_text!r}")
                 await self.pending_user_text.put(user_text)
 
@@ -712,6 +741,7 @@ class JarvisLive:
         self._loop = asyncio.get_event_loop()
 
         self.ui.write_log("SYS: Local STT/TTS active (sherpa-onnx). LLM: MiniMax.")
+        self._ignore_stt_until = time.monotonic() + 2.5
         self.ui.set_state("LISTENING")
 
         async with asyncio.TaskGroup() as tg:

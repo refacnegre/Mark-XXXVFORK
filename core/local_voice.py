@@ -115,7 +115,6 @@ class LocalSTT:
             while True:
                 data, _ = stream.read(chunk_size)
                 chunk = data[:, 0].copy()
-                frames.append(chunk)
 
                 amp = float(np.abs(chunk).mean())
                 if amp > voice_threshold:
@@ -124,11 +123,18 @@ class LocalSTT:
                 elif started:
                     silence_for += chunk_ms
 
+                if started:
+                    frames.append(chunk)
+
                 elapsed = time.time() - t0
                 if started and silence_for >= silence_seconds:
                     break
                 if elapsed >= max_seconds:
                     break
+
+        if not started:
+            _log("🎙️ No voice activity detected, skipping")
+            return np.zeros((0,), dtype=np.float32)
 
         return np.concatenate(frames, axis=0) if frames else np.zeros((0,), dtype=np.float32)
 
