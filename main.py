@@ -3,6 +3,7 @@ import threading
 import json
 import sys
 import traceback
+import re
 from pathlib import Path
 
 from ui import JarvisUI
@@ -464,6 +465,10 @@ class JarvisLive:
         elif not self.ui.muted:
             self.ui.set_state("LISTENING")
 
+    def is_speaking(self) -> bool:
+        with self._speaking_lock:
+            return self._is_speaking
+
     def speak(self, text: str):
         if not text:
             return
@@ -477,6 +482,21 @@ class JarvisLive:
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
+    @staticmethod
+    def _sanitize_assistant_text(text: str) -> str:
+        t = (text or "").strip()
+        if not t:
+            return ""
+
+        # Hide model "thinking"/reasoning blocks if emitted inline.
+        t = re.sub(r"<think>.*?</think>", "", t, flags=re.IGNORECASE | re.DOTALL)
+        t = re.sub(r"```thinking.*?```", "", t, flags=re.IGNORECASE | re.DOTALL)
+        t = re.sub(r"^\\s*thinking\\s*:\\s*.*$", "", t, flags=re.IGNORECASE | re.MULTILINE)
+
+        # Normalize extra newlines/spaces after strip.
+        t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        return t
 
     def _system_instruction(self) -> str:
         from datetime import datetime
@@ -622,19 +642,25 @@ class JarvisLive:
                     self.messages.append(tool_msg)
                 continue
 
-            assistant_text = (message.get("content") or "").strip()
+            assistant_text = self._sanitize_assistant_text(message.get("content") or "")
             self.messages.append({"role": "assistant", "content": assistant_text})
             return assistant_text
 
     async def _speech_input_loop(self):
         _log("🎤 Speech input loop started")
         while True:
-            if self.ui.muted:
+            # Prevent self-echo loop: never listen while TTS is speaking.
+            if self.ui.muted or self.is_speaking():
                 await asyncio.sleep(0.1)
                 continue
 
             self.ui.set_state("LISTENING")
             user_text = await asyncio.to_thread(self.stt.listen_once)
+            # If speaking started during capture window, discard this chunk.
+            if self.is_speaking():
+                _log("🧹 Dropping captured STT text because assistant started speaking")
+                continue
+
             if user_text:
                 _log(f"🎙️ STT captured text: {user_text!r}")
                 await self.pending_user_text.put(user_text)
