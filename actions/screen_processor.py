@@ -64,7 +64,7 @@ def _get_api_key() -> str:
 
     key = get_google_ai_key()
     if not key:
-        raise RuntimeError("vision_api_key/google_api_key not found in config/api_keys.json")
+        raise RuntimeError("google_api_key not found in config/api_keys.json")
     return key.strip()
 
 

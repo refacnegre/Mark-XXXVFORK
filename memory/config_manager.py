@@ -55,11 +55,7 @@ def get_minimax_key() -> str | None:
 
 def get_google_ai_key() -> str | None:
     data = load_api_keys()
-    return (
-        data.get("vision_api_key")
-        or data.get("google_api_key")
-        or data.get("generative_ai_api_key")
-    )
+    return data.get("google_api_key")
 
 
 def is_configured() -> bool:
