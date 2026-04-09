@@ -5,6 +5,7 @@ import time
 import subprocess
 import platform
 from pathlib import Path
+from core.llm_adapter import complete_text
 
 import pyautogui
 import numpy as np
@@ -43,14 +44,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
 
 def _get_default_browser_name() -> str | None:
     """
@@ -256,28 +249,20 @@ def _get_transcript(video_id: str) -> str | None:
         return None
 
 
-def _summarize_with_gemini(transcript: str, video_url: str) -> str:
-    import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
+def _summarize_with_minimax(transcript: str, video_url: str) -> str:
+    max_chars = 80000
+    truncated = transcript[:max_chars] + ("..." if len(transcript) > max_chars else "")
+    return complete_text(
+        f"Please summarize this YouTube video transcript:\n\n{truncated}",
         system_instruction=(
             "You are JARVIS, Tony Stark's AI assistant. "
             "Summarize YouTube video transcripts clearly and concisely. "
             "Structure: 1-sentence overview, then 3-5 key points. "
             "Be direct. Address the user as 'sir'. "
             "Match the language of the transcript."
-        )
-    )
-
-    max_chars = 80000
-    truncated = transcript[:max_chars] + ("..." if len(transcript) > max_chars else "")
-
-    response = model.generate_content(
-        f"Please summarize this YouTube video transcript:\n\n{truncated}"
-    )
-    return response.text.strip()
+        ),
+        max_tokens=1200,
+    ).strip()
 
 
 def _save_to_notepad(content: str, video_url: str) -> str:
@@ -440,7 +425,7 @@ def _handle_summarize(parameters: dict, player, speak) -> str:
         speak("Transcript retrieved. Generating summary now.")
 
     try:
-        summary = _summarize_with_gemini(transcript, url)
+        summary = _summarize_with_minimax(transcript, url)
     except Exception as e:
         return f"Summary generation failed, sir: {e}"
 

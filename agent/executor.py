@@ -10,6 +10,7 @@ from typing import Callable
 
 from agent.planner       import create_plan, replan
 from agent.error_handler import analyze_error, generate_fix, ErrorDecision
+from core.llm_adapter import complete_text
 
 
 def get_base_dir() -> Path:
@@ -22,17 +23,7 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
-
 def _run_generated_code(description: str, speak: Callable | None = None) -> str:
-    import google.generativeai as genai
-
     if speak:
         speak("Writing custom code for this task, sir.")
 
@@ -50,28 +41,25 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         except Exception:
             pass
 
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=(
-            "You are an expert Python developer. "
-            "Write clean, complete, working Python code. "
-            "Use standard library + common packages. "
-            "Install missing packages with subprocess + pip if needed. "
-            "Return ONLY the Python code. No explanation, no markdown, no backticks.\n\n"
-            f"SYSTEM PATHS:\n"
-            f"  Desktop   = r'{desktop}'\n"
-            f"  Downloads = r'{downloads}'\n"
-            f"  Documents = r'{documents}'\n"
-            f"  Home      = r'{home}'\n"
-        )
+    system_instruction = (
+        "You are an expert Python developer. "
+        "Write clean, complete, working Python code. "
+        "Use standard library + common packages. "
+        "Install missing packages with subprocess + pip if needed. "
+        "Return ONLY the Python code. No explanation, no markdown, no backticks.\n\n"
+        f"SYSTEM PATHS:\n"
+        f"  Desktop   = r'{desktop}'\n"
+        f"  Downloads = r'{downloads}'\n"
+        f"  Documents = r'{documents}'\n"
+        f"  Home      = r'{home}'\n"
     )
 
     try:
-        response = model.generate_content(
-            f"Write Python code to accomplish this task:\n\n{description}"
+        code = complete_text(
+            f"Write Python code to accomplish this task:\n\n{description}",
+            system_instruction=system_instruction,
+            max_tokens=1800,
         )
-        code = response.text.strip()
         code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
 
         with tempfile.NamedTemporaryFile(
@@ -132,16 +120,12 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
 
     return params
 def _detect_language(text: str) -> str:
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     try:
-        response = model.generate_content(
+        return complete_text(
             f"What language is this text written in? "
             f"Reply with ONLY the language name in English (e.g. Turkish, English, French).\n\n"
             f"Text: {text[:200]}"
-        )
-        return response.text.strip()
+        ).strip()
     except Exception:
         return "English"
 
@@ -150,10 +134,6 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
     if not goal:
         return content
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-2.5-flash")
-
         target_lang = _detect_language(goal)
         print(f"[Executor] 🌐 Translating to: {target_lang}")
 
@@ -167,8 +147,7 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
             f"- Output ONLY the translated text, nothing else\n\n"
             f"Text to translate:\n{content[:4000]}"
         )
-        response = model.generate_content(prompt)
-        translated = response.text.strip()
+        translated = complete_text(prompt, max_tokens=1800).strip()
         print(f"[Executor] ✅ Translation done ({target_lang})")
         return translated
     except Exception as e:
@@ -251,8 +230,7 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
 
     else:
-        print(f"[Executor] ⚠️ Unknown tool '{tool}' — falling back to generated_code")
-        return _run_generated_code(f"Accomplish this task: {parameters}", speak=speak)
+        raise ValueError(f"Unknown tool: {tool}")
 
 class AgentExecutor:
 
@@ -385,9 +363,6 @@ class AgentExecutor:
     def _summarize(self, goal: str, completed_steps: list, speak: Callable | None) -> str:
         fallback = f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=_get_api_key())
-            model     = genai.GenerativeModel(model_name="gemini-2.5-flash-lite")
             steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
             prompt    = (
                 f'User goal: "{goal}"\n'
@@ -395,8 +370,7 @@ class AgentExecutor:
                 "Write a single natural sentence summarizing what was accomplished. "
                 "Address the user as 'sir'. Be direct and positive."
             )
-            response = model.generate_content(prompt)
-            summary  = response.text.strip()
+            summary = complete_text(prompt).strip()
             if speak: speak(summary)
             return summary
         except Exception:

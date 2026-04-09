@@ -16,6 +16,7 @@ import tempfile
 import pyautogui
 from pathlib import Path
 from datetime import datetime
+from core.llm_adapter import complete_text
 
 
 def get_base_dir():
@@ -25,15 +26,6 @@ def get_base_dir():
 
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
-
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
 
 
 def _get_desktop() -> Path:
@@ -58,16 +50,11 @@ def _is_safe_code(code: str) -> tuple[bool, str]:
     return True, "OK"
 
 
-def _ask_gemini_for_desktop_action(task: str) -> str:
+def _ask_minimax_for_desktop_action(task: str) -> str:
     """
-    Asks Gemini to generate safe Python/pyautogui code
+    Asks MiniMax to generate safe Python/pyautogui code
     to accomplish a desktop-related task.
     """
-    import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-2.5-flash")
-
     desktop = str(_get_desktop())
 
     prompt = f"""You are a Windows desktop automation expert.
@@ -95,8 +82,7 @@ Task: {task}
 Python code:"""
 
     try:
-        response = model.generate_content(prompt)
-        code = response.text.strip()
+        code = complete_text(prompt, max_tokens=1400).strip()
         if code.startswith("```"):
             lines = code.split("\n")
             code = "\n".join(lines[1:-1]).strip()
@@ -106,7 +92,7 @@ Python code:"""
 
 
 def _execute_generated_code(code: str) -> str:
-    """Safely executes Gemini-generated desktop automation code."""
+    """Safely executes MiniMax-generated desktop automation code."""
     safe, reason = _is_safe_code(code)
     if not safe:
         return f"⛔ Blocked for safety: {reason}"
@@ -393,7 +379,7 @@ def desktop_control(
             if player:
                 player.write_log("[Desktop] Generating action...")
 
-            code = _ask_gemini_for_desktop_action(actual_task)
+            code = _ask_minimax_for_desktop_action(actual_task)
 
             if code == "UNSAFE":
                 result = "I cannot perform that desktop action safely, sir."
@@ -406,7 +392,7 @@ def desktop_control(
         else:
             full_task = task or action
             if full_task:
-                code   = _ask_gemini_for_desktop_action(full_task)
+                code   = _ask_minimax_for_desktop_action(full_task)
                 result = _execute_generated_code(code) if code not in ("UNSAFE",) else "Cannot do that safely."
             else:
                 result = "No action or task specified."

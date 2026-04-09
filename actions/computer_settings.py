@@ -13,6 +13,7 @@ import subprocess
 import sys
 import platform
 from pathlib import Path
+from core.llm_adapter import complete_text
 
 try:
     import pyautogui
@@ -39,13 +40,6 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 import json
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
 
 
 def volume_up():
@@ -516,10 +510,6 @@ def _detect_action(description: str) -> dict:
     Herhangi bir dilde çalışır.
     Döner: {"action": str, "value": optional}
     """
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
     available = ", ".join(sorted(ACTION_MAP.keys())) + ", volume_set, type_text, write_on_screen, reload_n, press_key"
 
     prompt = f"""The user wants to control their computer. Detect their intent.
@@ -590,8 +580,7 @@ IMPORTANT:
 - Return ONLY the JSON object, no explanation, no markdown."""
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
+        text = complete_text(prompt, max_tokens=260).strip()
         text = __import__("re").sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
         return json.loads(text)
     except Exception as e:

@@ -25,6 +25,7 @@ import string
 import subprocess
 import platform
 from pathlib import Path
+from core.llm_adapter import complete_text
 
 try:
     import pyautogui
@@ -336,17 +337,7 @@ def _analyze_screen_for_element(description: str) -> tuple[int, int] | None:
     of a described element on screen. Returns (x, y) or None.
     """
     try:
-        import google.generativeai as genai
         import io
-
-        from memory.config_manager import get_google_ai_key
-
-        api_key = get_google_ai_key()
-        if not api_key:
-            raise RuntimeError("google_api_key not found in config/api_keys.json")
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
 
         _ensure_pyautogui()
@@ -363,12 +354,10 @@ def _analyze_screen_for_element(description: str) -> tuple[int, int] | None:
             f"If not found, return: NOT_FOUND"
         )
 
-        response = model.generate_content([
-            {"mime_type": "image/png", "data": buf.getvalue()},
-            prompt
-        ])
-
-        text = response.text.strip()
+        text = complete_text(
+            f"{prompt}\nImage is available locally; if vision is unavailable return NOT_FOUND.",
+            max_tokens=50,
+        ).strip()
         if "NOT_FOUND" in text:
             return None
 

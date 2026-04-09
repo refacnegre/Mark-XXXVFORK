@@ -3,6 +3,7 @@ import sys
 import json
 import re
 from pathlib import Path
+from core.llm_adapter import complete_text
 
 
 def get_base_dir():
@@ -12,15 +13,6 @@ def get_base_dir():
 
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
-
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
 
 
 def _get_platform() -> str:
@@ -106,20 +98,15 @@ def _is_safe(command: str) -> tuple[bool, str]:
         return False, f"Blocked pattern: '{match.group()}'"
     return True, "OK"
 
-def _ask_gemini(task: str) -> str:
+def _ask_minimax(task: str) -> str:
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
         prompt = (
             f"Convert this request to a single Windows CMD command.\n"
             f"Output ONLY the command. No explanation, no markdown, no backticks.\n"
             f"If unsafe or impossible, output: UNSAFE\n\n"
             f"Request: {task}\n\nCommand:"
         )
-        response = model.generate_content(prompt)
-        command  = response.text.strip().strip("`").strip()
+        command = complete_text(prompt, max_tokens=120).strip().strip("`").strip()
         if command.startswith("```"):
             lines   = command.split("\n")
             command = "\n".join(lines[1:-1]).strip()
@@ -207,8 +194,8 @@ def cmd_control(
         if command:
             print(f"[CMD] ⚡ Hardcoded: {command[:80]}")
         else:
-            print(f"[CMD] 🤖 Gemini fallback for: {task}")
-            command = _ask_gemini(task)
+            print(f"[CMD] 🤖 MiniMax fallback for: {task}")
+            command = _ask_minimax(task)
             print(f"[CMD] ✅ Generated: {command[:80]}")
             if command == "UNSAFE":
                 return "I cannot generate a safe command for that request, sir."
