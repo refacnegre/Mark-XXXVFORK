@@ -78,6 +78,8 @@ class JarvisUI:
 
         # Klavye girişinden komutu iletmek için callback — main.py atar
         self.on_text_command = None
+        self.on_shutdown = None
+        self._shutdown_started = False
 
         self._face_pil         = None
         self._has_face         = False
@@ -123,7 +125,23 @@ class JarvisUI:
             self._show_setup_ui()
 
         self._animate()
-        self.root.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
+        self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
+
+    def shutdown(self):
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+
+        if callable(self.on_shutdown):
+            try:
+                self.on_shutdown()
+            except Exception:
+                pass
+
+        try:
+            self.root.quit()
+        finally:
+            self.root.destroy()
 
     # ── Mute butonu ───────────────────────────────────────────────────────────
 
