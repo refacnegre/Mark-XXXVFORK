@@ -5,6 +5,7 @@ import sys
 import traceback
 import re
 import time
+import atexit
 from pathlib import Path
 
 from ui import JarvisUI
@@ -467,13 +468,18 @@ class JarvisLive:
         self._last_stt_text = ""
         self._last_stt_time = 0.0
         self._ignore_stt_until = 0.0
+        self._shutdown_event = threading.Event()
 
     def _on_text_command(self, text: str):
+        if self._shutdown_event.is_set():
+            return
         if not self._loop or not self.pending_user_text:
             return
         asyncio.run_coroutine_threadsafe(self._queue_user_text(text, source="text_ui"), self._loop)
 
     async def _queue_user_text(self, text: str, source: str) -> None:
+        if self._shutdown_event.is_set():
+            return
         cleaned = (text or "").strip()
         if not cleaned or not self.pending_user_text:
             return
@@ -519,13 +525,23 @@ class JarvisLive:
             return self._is_speaking
 
     def speak(self, text: str):
-        if not text:
+        if not text or self._shutdown_event.is_set():
             return
         self.set_speaking(True)
         try:
             self.tts.speak(text)
         finally:
             self.set_speaking(False)
+
+    def request_shutdown(self):
+        if self._shutdown_event.is_set():
+            return
+        _log("🛑 Shutdown requested")
+        self._shutdown_event.set()
+        try:
+            LocalTTS.stop()
+        except Exception:
+            pass
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -710,14 +726,14 @@ class JarvisLive:
 
     async def _speech_input_loop(self):
         _log("🎤 Speech input loop started")
-        while True:
+        while not self._shutdown_event.is_set():
             # Prevent self-echo loop: never listen while TTS is speaking.
             if self.ui.muted or self.is_speaking():
                 await asyncio.sleep(0.1)
                 continue
 
             self.ui.set_state("LISTENING")
-            user_text = await asyncio.to_thread(self.stt.listen_once)
+            user_text = await asyncio.to_thread(self.stt.listen_once, self._shutdown_event)
             # If speaking started during capture window, discard this chunk.
             if self.is_speaking():
                 _log("🧹 Dropping captured STT text because assistant started speaking")
@@ -729,8 +745,11 @@ class JarvisLive:
 
     async def _consume_user_text_loop(self):
         _log("🧾 User text consume loop started")
-        while True:
-            text = await self.pending_user_text.get()
+        while not self._shutdown_event.is_set():
+            try:
+                text = await asyncio.wait_for(self.pending_user_text.get(), timeout=0.25)
+            except asyncio.TimeoutError:
+                continue
             text = (text or "").strip()
             if not text:
                 continue
@@ -783,17 +802,32 @@ class JarvisLive:
 
 def main():
     ui = JarvisUI("face.png")
+    jarvis_holder = {"instance": None}
 
     def runner():
         ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
+        jarvis_holder["instance"] = jarvis
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
+        finally:
+            jarvis.request_shutdown()
 
-    threading.Thread(target=runner, daemon=True).start()
+    def shutdown_hook():
+        jarvis = jarvis_holder["instance"]
+        if jarvis:
+            jarvis.request_shutdown()
+
+    ui.on_shutdown = shutdown_hook
+    atexit.register(shutdown_hook)
+
+    runner_thread = threading.Thread(target=runner, daemon=True)
+    runner_thread.start()
     ui.root.mainloop()
+    shutdown_hook()
+    runner_thread.join(timeout=2.0)
 
 
 if __name__ == "__main__":

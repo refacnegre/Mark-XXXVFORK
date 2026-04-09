@@ -105,6 +105,7 @@ class LocalSTT:
         silence_seconds: float = 1.0,
         max_seconds: float = 18.0,
         voice_threshold: float = 0.012,
+        stop_event=None,
     ) -> np.ndarray:
         frames: list[np.ndarray] = []
         started = False
@@ -120,6 +121,10 @@ class LocalSTT:
         ) as stream:
             t0 = time.time()
             while True:
+                if stop_event and stop_event.is_set():
+                    _log("🛑 STT record stop requested")
+                    return np.zeros((0,), dtype=np.float32)
+
                 data, _ = stream.read(chunk_size)
                 chunk = data[:, 0].copy()
 
@@ -145,8 +150,8 @@ class LocalSTT:
 
         return np.concatenate(frames, axis=0) if frames else np.zeros((0,), dtype=np.float32)
 
-    def listen_once(self) -> str:
-        samples = self._record_until_silence()
+    def listen_once(self, stop_event=None) -> str:
+        samples = self._record_until_silence(stop_event=stop_event)
         if samples.size < int(self.sample_rate * 0.4):
             _log("🎙️ Input too short, skipping")
             return ""
@@ -191,6 +196,10 @@ class LocalTTS:
             _log("⚠️ Empty TTS output")
             return
         sd.play(wav, sr, blocking=True)
+
+    @staticmethod
+    def stop() -> None:
+        sd.stop()
 
     @staticmethod
     def as_wav_bytes(samples: np.ndarray, sample_rate: int) -> bytes:
