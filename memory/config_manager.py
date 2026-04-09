@@ -22,7 +22,7 @@ def config_exists() -> bool:
     return CONFIG_FILE.exists()
 
 
-def save_api_keys(minimax_api_key: str, gemini_api_key: str | None = None) -> None:
+def save_api_keys(minimax_api_key: str, google_api_key: str | None = None) -> None:
     ensure_config_dir()
 
     data: dict = {}
@@ -33,8 +33,8 @@ def save_api_keys(minimax_api_key: str, gemini_api_key: str | None = None) -> No
             data = {}
 
     data["minimax_api_key"] = minimax_api_key.strip()
-    if gemini_api_key is not None:
-        data["gemini_api_key"] = gemini_api_key.strip()
+    if google_api_key is not None:
+        data["google_api_key"] = google_api_key.strip()
 
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -53,8 +53,13 @@ def get_minimax_key() -> str | None:
     return load_api_keys().get("minimax_api_key")
 
 
-def get_gemini_key() -> str | None:
-    return load_api_keys().get("gemini_api_key")
+def get_google_ai_key() -> str | None:
+    data = load_api_keys()
+    return (
+        data.get("vision_api_key")
+        or data.get("google_api_key")
+        or data.get("generative_ai_api_key")
+    )
 
 
 def is_configured() -> bool:

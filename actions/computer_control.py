@@ -339,9 +339,11 @@ def _analyze_screen_for_element(description: str) -> tuple[int, int] | None:
         import google.generativeai as genai
         import io
 
-        cfg_path = API_CONFIG_PATH
-        with open(cfg_path, "r") as f:
-            api_key = json.load(f)["gemini_api_key"]
+        from memory.config_manager import get_google_ai_key
+
+        api_key = get_google_ai_key()
+        if not api_key:
+            raise RuntimeError("google_api_key not found in config/api_keys.json")
 
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash-lite")
