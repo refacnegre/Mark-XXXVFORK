@@ -20,8 +20,16 @@ try:
 except ImportError:
     _PIL_OK = False
 
-from google import genai
-from google.genai import types
+
+def _load_vision_sdk():
+    try:
+        from google import genai
+        from google.genai import types
+        return genai, types
+    except Exception as e:
+        raise RuntimeError(
+            "Vision module is unavailable: required vision SDK is not installed."
+        ) from e
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -55,9 +63,9 @@ def _get_api_key() -> str:
     try:
         with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
             keys = json.load(f)
-        key = keys.get("gemini_api_key", "")
+        key = (keys.get("vision_api_key") or keys.get("gemini_api_key") or "").strip()
         if not key:
-            raise ValueError("gemini_api_key not found")
+            raise ValueError("vision_api_key not found")
         return key
     except Exception as e:
         raise RuntimeError(f"Could not load API key: {e}")
@@ -180,6 +188,7 @@ class _LiveSession:
         self._audio_in  = asyncio.Queue()
         self._send_lock = asyncio.Lock()
 
+        genai, types = _load_vision_sdk()
         client = genai.Client(
             api_key=_get_api_key(),
             http_options={"api_version": "v1beta"}

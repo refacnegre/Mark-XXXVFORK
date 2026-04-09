@@ -50,9 +50,21 @@ PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        keys = json.load(f)
-        return keys.get("minimax_api_key") or keys.get("gemini_api_key")
+    try:
+        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+            keys = json.load(f)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"API config not found: {API_CONFIG_PATH}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"API config is invalid JSON: {API_CONFIG_PATH}") from e
+
+    api_key = (keys.get("minimax_api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Missing required 'minimax_api_key' in config/api_keys.json. "
+            "Application cannot start without a MiniMax API key."
+        )
+    return api_key
 
 
 def _load_system_prompt() -> str:
@@ -459,7 +471,15 @@ class JarvisLive:
     def _on_text_command(self, text: str):
         if not self._loop or not self.pending_user_text:
             return
-        asyncio.run_coroutine_threadsafe(self.pending_user_text.put(text), self._loop)
+        asyncio.run_coroutine_threadsafe(self._queue_user_text(text, source="text_ui"), self._loop)
+
+    async def _queue_user_text(self, text: str, source: str) -> None:
+        cleaned = (text or "").strip()
+        if not cleaned or not self.pending_user_text:
+            return
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        _log(f"🧾 Queue enqueue | source={source} | ts={ts} | text={cleaned!r}")
+        await self.pending_user_text.put(cleaned)
 
     def _should_queue_stt_text(self, text: str) -> bool:
         cleaned = (text or "").strip()
@@ -525,7 +545,15 @@ class JarvisLive:
 
         # Normalize extra newlines/spaces after strip.
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        # Enforce no-emoji output as a secondary safety guard.
+        t = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF]+", "", t).strip()
         return t
+
+    def _latest_user_text(self) -> str:
+        for msg in reversed(self.messages):
+            if msg.get("role") == "user":
+                return (msg.get("content") or "").strip()
+        return ""
 
     def _system_instruction(self) -> str:
         from datetime import datetime
@@ -593,6 +621,11 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
                 result = r or "Reminder set."
             elif name == "youtube_video":
+                trigger_text = self._latest_user_text()
+                _log(
+                    "🧪 youtube_video tool trigger "
+                    f"| user_text={trigger_text!r} | args={args}"
+                )
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
                 result = r or "Done."
             elif name == "screen_process":
@@ -692,7 +725,7 @@ class JarvisLive:
 
             if user_text and self._should_queue_stt_text(user_text):
                 _log(f"🎙️ STT captured text: {user_text!r}")
-                await self.pending_user_text.put(user_text)
+                await self._queue_user_text(user_text, source="stt")
 
     async def _consume_user_text_loop(self):
         _log("🧾 User text consume loop started")
