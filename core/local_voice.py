@@ -80,29 +80,17 @@ class LocalSTT:
             debug=False,
         )
 
-        # API changed across sherpa-onnx versions:
-        # - some builds expect `model_config=`
-        # - older wrappers accepted `model=`
-        try:
-            config = sherpa_onnx.OfflineRecognizerConfig(
-                model_config=model_config,
-                decoding_method="greedy_search",
-            )
-        except TypeError:
-            _log("RecognizerConfig(model_config=...) unsupported, retrying with model=...")
-            config = sherpa_onnx.OfflineRecognizerConfig(
-                model=model_config,
-                decoding_method="greedy_search",
-            )
-
-        validate_fn = getattr(config, "validate", None)
-        if callable(validate_fn):
-            if not validate_fn():
-                raise ValueError("STT model config invalid")
-        else:
-            _log("ℹ️ STT config.validate() not available in this sherpa-onnx build; skipping validation step")
-
-        self.recognizer = sherpa_onnx.OfflineRecognizer(config)
+        _ = model_config  # token/model path validation by explicit constructor below
+        self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
+            encoder=str(model_dir / "tiny-encoder.int8.onnx"),
+            decoder=str(model_dir / "tiny-decoder.int8.onnx"),
+            tokens=str(model_dir / "tiny-tokens.txt"),
+            language="tr",
+            task="transcribe",
+            num_threads=2,
+            provider="cpu",
+            debug=False,
+        )
         _log("✅ STT initialized")
 
     def _record_until_silence(
@@ -172,25 +160,10 @@ class LocalTTS:
             debug=False,
         )
 
-        try:
-            config = sherpa_onnx.OfflineTtsConfig(
-                model=tts_model_config,
-                max_num_sentences=2,
-            )
-        except TypeError:
-            _log("TtsConfig(model=...) unsupported, retrying with model_config=...")
-            config = sherpa_onnx.OfflineTtsConfig(
-                model_config=tts_model_config,
-                max_num_sentences=2,
-            )
-
-        validate_fn = getattr(config, "validate", None)
-        if callable(validate_fn):
-            if not validate_fn():
-                raise ValueError("TTS model config invalid")
-        else:
-            _log("ℹ️ TTS config.validate() not available in this sherpa-onnx build; skipping validation step")
-
+        config = sherpa_onnx.OfflineTtsConfig(
+            model=tts_model_config,
+            max_num_sentences=2,
+        )
         self.tts = sherpa_onnx.OfflineTts(config)
         _log("✅ TTS initialized")
 
