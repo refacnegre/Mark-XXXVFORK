@@ -23,6 +23,7 @@ import subprocess
 import platform
 from datetime import datetime, timedelta
 from pathlib import Path
+from core.llm_adapter import complete_text
 
 
 def get_base_dir() -> Path:
@@ -33,15 +34,6 @@ def get_base_dir() -> Path:
 
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
-
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
 
 
 def _parse_date(raw: str) -> str:
@@ -75,15 +67,12 @@ def _parse_date(raw: str) -> str:
             return val.strftime("%Y-%m-%d")
 
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
-        model    = genai.GenerativeModel("gemini-2.5-flash-lite")
         today_str = today.strftime("%Y-%m-%d")
-        response = model.generate_content(
+        result = complete_text(
             f"Today is {today_str}. Convert this date to YYYY-MM-DD format: '{raw}'. "
-            f"Return ONLY the date string, nothing else."
-        )
-        result = response.text.strip()
+            f"Return ONLY the date string, nothing else.",
+            max_tokens=30,
+        ).strip()
         if re.match(r"\d{4}-\d{2}-\d{2}", result):
             return result
     except Exception:
@@ -175,28 +164,16 @@ def _search_flights_browser(
     return result or "", url
 
 
-def _parse_flights_with_gemini(
+def _parse_flights_with_minimax(
     raw_text:    str,
     origin:      str,
     destination: str,
     date:        str,
 ) -> list[dict]:
     """
-    Sends raw page text to Gemini and extracts structured flight data.
+    Sends raw page text to MiniMax and extracts structured flight data.
     Returns list of flight dicts.
     """
-    import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=(
-            "You are a flight data extraction expert. "
-            "Extract flight information from raw webpage text. "
-            "Return ONLY valid JSON array. No explanation, no markdown."
-        )
-    )
-
     truncated = raw_text[:12000]
 
     prompt = (
@@ -209,8 +186,15 @@ def _parse_flights_with_gemini(
     )
 
     try:
-        response = model.generate_content(prompt)
-        text     = response.text.strip()
+        text = complete_text(
+            prompt,
+            system_instruction=(
+                "You are a flight data extraction expert. "
+                "Extract flight information from raw webpage text. "
+                "Return ONLY valid JSON array. No explanation, no markdown."
+            ),
+            max_tokens=1000,
+        ).strip()
         text     = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
         flights  = json.loads(text)
         return flights if isinstance(flights, list) else []
@@ -401,7 +385,7 @@ def flight_finder(
         if speak:
             speak("Analysing the results now.")
 
-        flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
+        flights = _parse_flights_with_minimax(raw_text, origin, destination, date)
 
         spoken = _format_spoken(flights, origin, destination, date)
         if speak:

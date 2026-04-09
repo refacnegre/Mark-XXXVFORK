@@ -22,9 +22,8 @@ def config_exists() -> bool:
     return CONFIG_FILE.exists()
 
 
-def save_api_keys(minimax_api_key: str, google_api_key: str | None = None) -> None:
+def save_api_keys(minimax_api_key: str) -> None:
     ensure_config_dir()
-
     data: dict = {}
     if CONFIG_FILE.exists():
         try:
@@ -32,10 +31,7 @@ def save_api_keys(minimax_api_key: str, google_api_key: str | None = None) -> No
         except Exception:
             data = {}
 
-    data["minimax_api_key"] = minimax_api_key.strip()
-    if google_api_key is not None:
-        data["google_api_key"] = google_api_key.strip()
-
+    data = {"minimax_api_key": minimax_api_key.strip()}
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
@@ -51,11 +47,6 @@ def load_api_keys() -> dict:
 
 def get_minimax_key() -> str | None:
     return load_api_keys().get("minimax_api_key")
-
-
-def get_google_ai_key() -> str | None:
-    data = load_api_keys()
-    return data.get("google_api_key")
 
 
 def is_configured() -> bool:

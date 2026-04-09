@@ -13,6 +13,7 @@ from datetime import datetime
 from threading import Lock
 from pathlib import Path
 import sys
+from core.llm_adapter import complete_text
 
 
 def get_base_dir() -> Path:
@@ -25,15 +26,6 @@ BASE_DIR         = get_base_dir()
 MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
 _lock            = Lock()
 MAX_VALUE_LENGTH = 400
-_MEMORY_AI_DISABLED_LOGGED = False
-
-
-def _load_memory_ai():
-    try:
-        import google.generativeai as genai
-        return genai
-    except Exception:
-        return None
 
 
 def _empty_memory() -> dict:
@@ -129,20 +121,8 @@ def should_extract_memory(user_text: str, jarvis_text: str, api_key: str) -> boo
     Öncekinden daha geniş kriterler — favori şeyler, projeler, arkadaşlar da dahil.
     """
     try:
-        global _MEMORY_AI_DISABLED_LOGGED
-        genai = _load_memory_ai()
-        if genai is None:
-            if not _MEMORY_AI_DISABLED_LOGGED:
-                print("[Memory] Info: memory extraction AI backend unavailable, skipping.")
-                _MEMORY_AI_DISABLED_LOGGED = True
-            return False
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
-        # Her iki tarafı da gönder — Jarvis'in söyledikleri de bilgi içerebilir
         combined = f"User: {user_text[:300]}\nJarvis: {jarvis_text[:200]}"
-
-        check = model.generate_content(
+        check = complete_text(
             f"Does this conversation contain ANY of the following?\n"
             f"- Personal facts (name, age, city, job, birthday, nationality)\n"
             f"- Preferences or favorites (food, color, music, sport, game, film, book, etc.)\n"
@@ -150,9 +130,10 @@ def should_extract_memory(user_text: str, jarvis_text: str, api_key: str) -> boo
             f"- People in the user's life (friends, family, partner, colleagues)\n"
             f"- Things the user wants to do or buy in the future\n"
             f"- Any other fact worth remembering long-term\n\n"
-            f"Reply only YES or NO.\n\nConversation:\n{combined}"
+            f"Reply only YES or NO.\n\nConversation:\n{combined}",
+            max_tokens=20,
         )
-        return "YES" in check.text.upper()
+        return "YES" in check.upper()
     except Exception as e:
         print(f"[Memory] ⚠️ Stage1 check failed: {e}")
         return False
@@ -163,15 +144,9 @@ def extract_memory(user_text: str, jarvis_text: str, api_key: str) -> dict:
     Stage 2: Detaylı çıkarım. Her iki tarafı da analiz eder.
     """
     try:
-        genai = _load_memory_ai()
-        if genai is None:
-            return {}
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
         combined = f"User: {user_text[:500]}\nJarvis: {jarvis_text[:300]}"
 
-        raw = model.generate_content(
+        raw = complete_text(
             f"Extract ALL memorable personal facts from this conversation. Any language.\n"
             f"Return ONLY valid JSON. Use {{}} if truly nothing is worth saving.\n\n"
             f"Category guide:\n"
@@ -198,8 +173,9 @@ def extract_memory(user_text: str, jarvis_text: str, api_key: str) -> dict:
             f' "relationships":{{"friend_yusuf":{{"value":"close friend"}}}},\n'
             f' "wishes":{{"buy_guitar":{{"value":"wants an acoustic guitar"}}}},\n'
             f' "notes":{{"works_at_night":{{"value":"usually active late at night"}}}}}}\n\n'
-            f"Conversation:\n{combined}\n\nJSON:"
-        ).text.strip()
+            f"Conversation:\n{combined}\n\nJSON:",
+            max_tokens=1600,
+        ).strip()
 
         import re
         raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()

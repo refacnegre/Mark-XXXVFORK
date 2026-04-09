@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from enum import Enum
 
+from core.llm_adapter import complete_json, complete_text
+
 
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -49,14 +51,6 @@ Return ONLY valid JSON:
 """
 
 
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
-
 
 def analyze_error(
     step: dict,
@@ -82,8 +76,6 @@ def analyze_error(
             "user_message": str
         }
     """
-    import google.generativeai as genai
-
     if attempt >= max_attempts:
         print(f"[ErrorHandler] ⚠️ Max attempts reached for step {step.get('step')} — forcing replan")
         return {
@@ -93,12 +85,6 @@ def analyze_error(
             "max_retries":   0,
             "user_message":  "Trying a different approach, sir."
         }
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash-lite",
-        system_instruction=ERROR_ANALYST_PROMPT
-    )
 
     prompt = f"""Failed step:
 Tool: {step.get('tool')}
@@ -112,11 +98,7 @@ Error:
 Attempt number: {attempt}"""
 
     try:
-        response = model.generate_content(prompt)
-        text     = response.text.strip()
-        text     = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-
-        result = json.loads(text)
+        result = complete_json(prompt, system_instruction=ERROR_ANALYST_PROMPT)
         decision_str = result.get("decision", "replan").lower()
         decision_map = {
             "retry":  ErrorDecision.RETRY,
@@ -152,10 +134,6 @@ def generate_fix(step: dict, error: str, fix_suggestion: str) -> dict:
 
     Returns a modified step dict.
     """
-    import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
 
     prompt = f"""A task step failed. Generate a replacement step.
 
@@ -171,8 +149,7 @@ Write a Python script that accomplishes the same goal differently.
 Return ONLY the Python code, no explanation."""
 
     try:
-        response = model.generate_content(prompt)
-        code = response.text.strip()
+        code = complete_text(prompt)
         code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
 
         return {
@@ -193,9 +170,9 @@ Return ONLY the Python code, no explanation."""
         print(f"[ErrorHandler] ⚠️ Fix generation failed: {e}")
         return {
             "step":        step.get("step"),
-            "tool":        "generated_code",
+            "tool":        "code_helper",
             "description": f"Fallback for: {step.get('description')}",
-            "parameters":  {"description": step.get("description", "")},
+            "parameters":  {"action": "run", "description": step.get("description", "")},
             "depends_on":  step.get("depends_on", []),
             "critical":    step.get("critical", False)
         }

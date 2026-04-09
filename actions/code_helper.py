@@ -18,6 +18,8 @@ import re
 import time
 from pathlib import Path
 
+from core.llm_adapter import complete_text
+
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -28,22 +30,13 @@ BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
-GEMINI_MODEL       = "gemini-2.5-flash"
+LLM_MODEL          = "MiniMax-M2.5"
 
 
-def _get_api_key() -> str:
-    from memory.config_manager import get_google_ai_key
-
-    key = get_google_ai_key()
-    if not key:
-        raise RuntimeError("google_api_key not found in config/api_keys.json")
-    return key
 
 
-def _get_gemini(model: str = GEMINI_MODEL):
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel(model)
+def _llm_text(prompt: str, system_instruction: str = "", max_tokens: int = 1800) -> str:
+    return complete_text(prompt, system_instruction=system_instruction, model=LLM_MODEL, max_tokens=max_tokens)
 
 
 def _clean_code(text: str) -> str:
@@ -164,8 +157,6 @@ def _detect_intent(description: str, file_path: str, code: str) -> str:
 
 def _write(description: str, language: str, output_path: str, player=None) -> tuple[str, Path]:
     lang  = language or "python"
-    model = _get_gemini()
-
     prompt = f"""You are an expert {lang} developer.
 Write clean, working, well-commented {lang} code for the description below.
 
@@ -179,15 +170,13 @@ Description: {description}
 
 Code:"""
 
-    response = model.generate_content(prompt)
-    code     = _clean_code(response.text)
+    code = _clean_code(_llm_text(prompt))
     path     = _resolve_save_path(output_path, lang)
     _save_file(path, code)
     return code, path
 
 
 def _fix_code(code: str, error_output: str, description: str) -> str:
-    model  = _get_gemini()
     prompt = f"""You are an expert debugger.
 The code below failed with the following error. Fix it.
 Return ONLY the corrected code — no explanation, no markdown, no backticks.
@@ -202,8 +191,7 @@ Broken code:
 
 Fixed code:"""
 
-    response = model.generate_content(prompt)
-    return _clean_code(response.text)
+    return _clean_code(_llm_text(prompt))
 
 
 def _run_file(path: Path, args: list, timeout: int) -> str:
@@ -321,7 +309,6 @@ def _edit_action(file_path, instruction, player) -> str:
     if player:
         player.write_log("[Code] Editing file...")
 
-    model  = _get_gemini()
     prompt = f"""You are an expert code editor.
 Apply the following change to the code below.
 Return ONLY the complete updated code — no explanation, no markdown, no backticks.
@@ -334,8 +321,7 @@ Original code:
 Updated code:"""
 
     try:
-        response = model.generate_content(prompt)
-        edited   = _clean_code(response.text)
+        edited = _clean_code(_llm_text(prompt))
     except Exception as e:
         return f"Could not edit code: {e}"
 
@@ -355,7 +341,6 @@ def _explain_action(file_path, code, player) -> str:
     if player:
         player.write_log("[Code] Analyzing code...")
 
-    model  = _get_gemini()
     prompt = f"""Explain what this code does in simple, clear language.
 Focus on: what it does, how it works, and any important details.
 Be concise — 3 to 6 sentences maximum.
@@ -366,8 +351,7 @@ Code:
 Explanation:"""
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return _llm_text(prompt, max_tokens=600).strip()
     except Exception as e:
         return f"Could not explain code: {e}"
 
@@ -396,8 +380,6 @@ def _optimize_action(file_path, code, language, output_path, player) -> str:
         player.write_log("[Code] Optimizing code...")
 
     lang  = language or "python"
-    model = _get_gemini()
-
     prompt = f"""You are an expert {lang} developer and code reviewer.
 Optimize the following code for:
 1. Performance — eliminate unnecessary operations, use efficient data structures
@@ -413,8 +395,7 @@ Original code:
 Optimized code:"""
 
     try:
-        response  = model.generate_content(prompt)
-        optimized = _clean_code(response.text)
+        optimized = _clean_code(_llm_text(prompt))
     except Exception as e:
         return f"Could not optimize code: {e}"
 
@@ -459,43 +440,27 @@ def _screen_debug_action(description, file_path, player, speak=None) -> str:
             print(f"[Code] ⚠️ Could not read file: {err}")
 
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=_get_api_key())
-
-        image_bytes  = screenshot_path.read_bytes()
-        image_base64 = _image_to_base64(screenshot_path)
-
         user_question = description or "What error or problem do you see on the screen? How can it be fixed?"
 
         context = ""
         if file_content:
             context = f"\n\nAdditionally, here is the related file content:\n```\n{file_content[:4000]}\n```"
 
-        analysis_prompt = f"""You are an expert programmer and debugger analyzing a screenshot.
+        analysis_prompt = f"""You are an expert programmer and debugger.
+
+The user captured a screenshot for debugging, but this build uses text-only MiniMax flow for screen debug.
+Use the user question and file context to provide the best likely diagnosis and a concrete fix.
 
 User's question: {user_question}{context}
 
 Please:
-1. Identify any errors, exceptions, or problems visible on the screen
-2. Explain what is causing the problem in simple terms
-3. Provide a concrete fix or solution
-4. If there's code visible, show the corrected version
+1. Identify likely errors/problems
+2. Explain root cause simply
+3. Provide a concrete fix
+4. If code is involved, include corrected code block
+"""
 
-Be specific and actionable. If you see an error message, quote it exactly."""
-
-        contents = [
-            types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-            analysis_prompt,
-        ]
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-        )
-
-        analysis = response.text.strip()
+        analysis = _llm_text(analysis_prompt, max_tokens=1400).strip()
         print(f"[Code] ✅ Screen analysis complete")
 
         try:
