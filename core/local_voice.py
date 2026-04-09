@@ -95,8 +95,12 @@ class LocalSTT:
                 decoding_method="greedy_search",
             )
 
-        if not config.validate():
-            raise ValueError("STT model config invalid")
+        validate_fn = getattr(config, "validate", None)
+        if callable(validate_fn):
+            if not validate_fn():
+                raise ValueError("STT model config invalid")
+        else:
+            _log("ℹ️ STT config.validate() not available in this sherpa-onnx build; skipping validation step")
 
         self.recognizer = sherpa_onnx.OfflineRecognizer(config)
         _log("✅ STT initialized")
@@ -180,8 +184,12 @@ class LocalTTS:
                 max_num_sentences=2,
             )
 
-        if not config.validate():
-            raise ValueError("TTS model config invalid")
+        validate_fn = getattr(config, "validate", None)
+        if callable(validate_fn):
+            if not validate_fn():
+                raise ValueError("TTS model config invalid")
+        else:
+            _log("ℹ️ TTS config.validate() not available in this sherpa-onnx build; skipping validation step")
 
         self.tts = sherpa_onnx.OfflineTts(config)
         _log("✅ TTS initialized")
