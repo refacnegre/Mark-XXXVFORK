@@ -462,13 +462,17 @@ class JarvisLive:
         self.stt = None
         self.tts = None
         self.llm = None
-        self.pending_user_text: asyncio.Queue[str] | None = None
+        self.pending_user_text: asyncio.Queue[dict] | None = None
 
         self.messages: list[dict] = []
         self._last_stt_text = ""
         self._last_stt_time = 0.0
         self._ignore_stt_until = 0.0
         self._shutdown_event = threading.Event()
+        self._stt_artifact_re = re.compile(
+            r"^\s*[\(\[]?\s*(m[üu]zik(?:\s+çal(ıyor|iyo|iyor))?|music|noise|g[üu]r[üu]lt[üu])\s*[\)\]]?\s*$",
+            re.IGNORECASE,
+        )
 
     def _on_text_command(self, text: str):
         if self._shutdown_event.is_set():
@@ -485,7 +489,13 @@ class JarvisLive:
             return
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         _log(f"🧾 Queue enqueue | source={source} | ts={ts} | text={cleaned!r}")
-        await self.pending_user_text.put(cleaned)
+        await self.pending_user_text.put(
+            {
+                "text": cleaned,
+                "source": source,
+                "created_monotonic": time.monotonic(),
+            }
+        )
 
     def _should_queue_stt_text(self, text: str) -> bool:
         cleaned = (text or "").strip()
@@ -503,8 +513,16 @@ class JarvisLive:
             _log(f"🚫 Ignoring bracketed STT artifact: {cleaned!r}")
             return False
 
-        normalized = re.sub(r"\s+", " ", cleaned.casefold())
-        if normalized == self._last_stt_text and (now - self._last_stt_time) < 4.0:
+        compact = re.sub(r"\s+", " ", cleaned.casefold())
+        if self._stt_artifact_re.match(compact):
+            _log(f"🚫 Ignoring parenthesized/noise STT artifact: {cleaned!r}")
+            return False
+        if compact.startswith("(") and compact.endswith(")") and len(compact) <= 18:
+            _log(f"🚫 Ignoring short parenthesized STT artifact: {cleaned!r}")
+            return False
+
+        normalized = compact
+        if normalized == self._last_stt_text and (now - self._last_stt_time) < 12.0:
             _log(f"🚫 Ignoring duplicate STT text: {cleaned!r}")
             return False
 
@@ -527,11 +545,36 @@ class JarvisLive:
     def speak(self, text: str):
         if not text or self._shutdown_event.is_set():
             return
+        self._drain_pending_stt()
         self.set_speaking(True)
         try:
             self.tts.speak(text)
         finally:
             self.set_speaking(False)
+
+    def _drain_pending_stt(self) -> None:
+        q = self.pending_user_text
+        if not q:
+            return
+
+        kept: list[dict] = []
+        dropped = 0
+        while True:
+            try:
+                item = q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+            if isinstance(item, dict) and item.get("source") == "stt":
+                dropped += 1
+                continue
+            kept.append(item)
+
+        for item in kept:
+            q.put_nowait(item)
+
+        if dropped:
+            _log(f"🧹 Dropped queued STT items before TTS speak: {dropped}")
 
     def request_shutdown(self):
         if self._shutdown_event.is_set():
@@ -747,11 +790,24 @@ class JarvisLive:
         _log("🧾 User text consume loop started")
         while not self._shutdown_event.is_set():
             try:
-                text = await asyncio.wait_for(self.pending_user_text.get(), timeout=0.25)
+                item = await asyncio.wait_for(self.pending_user_text.get(), timeout=0.25)
             except asyncio.TimeoutError:
                 continue
-            text = (text or "").strip()
+
+            if isinstance(item, dict):
+                text = (item.get("text") or "").strip()
+                source = (item.get("source") or "").strip()
+                created = float(item.get("created_monotonic") or 0.0)
+            else:
+                text = (item or "").strip()
+                source = "unknown"
+                created = 0.0
+
             if not text:
+                continue
+
+            if source == "stt" and created and (time.monotonic() - created) > 6.0:
+                _log(f"🧹 Dropping stale queued STT text: {text!r}")
                 continue
 
             self.ui.write_log(f"You: {text}")
