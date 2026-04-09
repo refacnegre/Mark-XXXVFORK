@@ -4,6 +4,10 @@ from typing import Any
 import requests
 
 
+def _log(msg: str) -> None:
+    print(f"[MiniMaxClient] {msg}")
+
+
 class MiniMaxClient:
     def __init__(
         self,
@@ -25,6 +29,10 @@ class MiniMaxClient:
         temperature: float = 0.3,
         max_tokens: int = 800,
     ) -> dict[str, Any]:
+        _log(
+            f"➡️ chat request | model={self.model} "
+            f"| messages={len(messages)} | tools={'yes' if tools else 'no'}"
+        )
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -45,6 +53,7 @@ class MiniMaxClient:
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=self.timeout,
         )
+        _log(f"⬅️ HTTP {res.status_code}")
         res.raise_for_status()
         data = res.json()
 
@@ -53,4 +62,6 @@ class MiniMaxClient:
         if isinstance(base_resp, dict) and base_resp.get("status_code", 0) not in (0, None):
             raise RuntimeError(base_resp.get("status_msg") or str(base_resp))
 
+        choices = data.get("choices") or []
+        _log(f"✅ response parsed | choices={len(choices)}")
         return data

@@ -32,6 +32,10 @@ from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
 
 
+def _log(msg: str) -> None:
+    print(f"[JARVIS] {msg}")
+
+
 def get_base_dir():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
@@ -592,6 +596,7 @@ class JarvisLive:
         return {"role": "tool", "tool_call_id": tc.get("id", name), "content": str(result)}
 
     async def _run_chat(self, user_text: str) -> str:
+        _log(f"💬 User text queued for LLM: {user_text!r}")
         self.messages.append({"role": "user", "content": user_text})
 
         while True:
@@ -604,6 +609,11 @@ class JarvisLive:
             choice = ((data.get("choices") or [{}])[0])
             message = choice.get("message") or {}
             tool_calls = message.get("tool_calls") or []
+            _log(
+                "🧠 LLM turn received | "
+                f"tool_calls={len(tool_calls)} | "
+                f"content_len={len((message.get('content') or '').strip())}"
+            )
 
             if tool_calls:
                 self.messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
@@ -617,6 +627,7 @@ class JarvisLive:
             return assistant_text
 
     async def _speech_input_loop(self):
+        _log("🎤 Speech input loop started")
         while True:
             if self.ui.muted:
                 await asyncio.sleep(0.1)
@@ -625,9 +636,11 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
             user_text = await asyncio.to_thread(self.stt.listen_once)
             if user_text:
+                _log(f"🎙️ STT captured text: {user_text!r}")
                 await self.pending_user_text.put(user_text)
 
     async def _consume_user_text_loop(self):
+        _log("🧾 User text consume loop started")
         while True:
             text = await self.pending_user_text.get()
             text = (text or "").strip()
@@ -646,6 +659,7 @@ class JarvisLive:
                 continue
 
             if answer:
+                _log(f"🗣️ Assistant answer: {answer!r}")
                 self.ui.write_log(f"Jarvis: {answer}")
                 await asyncio.to_thread(self.speak, answer)
 
@@ -653,12 +667,19 @@ class JarvisLive:
                 threading.Thread(target=_update_memory_async, args=(text, answer), daemon=True).start()
 
     async def run(self):
-        print("[JARVIS] 🔌 Booting local STT/TTS + MiniMax...")
+        _log("🔌 Booting local STT/TTS + MiniMax...")
         self.ui.set_state("THINKING")
 
+        _log("📦 Checking/downloading local models")
         asr_model_dir, tts_model_dir = await asyncio.to_thread(self.model_manager.ensure_models)
+        _log(f"📁 ASR model dir: {asr_model_dir}")
+        _log(f"📁 TTS model dir: {tts_model_dir}")
+
+        _log("⚙️ Initializing STT")
         self.stt = LocalSTT(asr_model_dir)
+        _log("⚙️ Initializing TTS")
         self.tts = LocalTTS(tts_model_dir)
+        _log("⚙️ Initializing MiniMax client")
         self.llm = MiniMaxClient(api_key=_get_api_key())
 
         self.pending_user_text = asyncio.Queue()

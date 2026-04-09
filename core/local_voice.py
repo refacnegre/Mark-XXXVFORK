@@ -10,6 +10,10 @@ import sounddevice as sd
 import sherpa_onnx
 
 
+def _log(msg: str) -> None:
+    print(f"[LocalVoice] {msg}")
+
+
 class ModelManager:
     ASR_URL = (
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
@@ -27,10 +31,15 @@ class ModelManager:
         target_dir.mkdir(parents=True, exist_ok=True)
         archive = target_dir / Path(url).name
         if not archive.exists():
+            _log(f"⬇️ Downloading model: {url}")
             urllib.request.urlretrieve(url, archive)
+        else:
+            _log(f"📦 Archive already exists: {archive}")
 
+        _log(f"📂 Extracting: {archive} -> {target_dir}")
         with tarfile.open(archive, mode="r:bz2") as tf:
             tf.extractall(path=target_dir)
+        _log("✅ Extract complete")
 
     def ensure_models(self) -> tuple[Path, Path]:
         asr_root = self.models_dir / "asr"
@@ -38,11 +47,17 @@ class ModelManager:
 
         asr_model_dir = asr_root / "sherpa-onnx-whisper-tiny"
         if not (asr_model_dir / "tiny-encoder.int8.onnx").exists():
+            _log("ASR model missing, preparing download")
             self._download_and_extract(self.ASR_URL, asr_root)
+        else:
+            _log(f"ASR model ready: {asr_model_dir}")
 
         tts_model_dir = tts_root / "vits-piper-tr_TR-fahrettin-medium"
         if not (tts_model_dir / "tr_TR-fahrettin-medium.onnx").exists():
+            _log("TTS model missing, preparing download")
             self._download_and_extract(self.TTS_URL, tts_root)
+        else:
+            _log(f"TTS model ready: {tts_model_dir}")
 
         return asr_model_dir, tts_model_dir
 
@@ -50,25 +65,41 @@ class ModelManager:
 class LocalSTT:
     def __init__(self, model_dir: Path, sample_rate: int = 16000):
         self.sample_rate = sample_rate
-        config = sherpa_onnx.OfflineRecognizerConfig(
-            model=sherpa_onnx.OfflineModelConfig(
-                whisper=sherpa_onnx.OfflineWhisperModelConfig(
-                    encoder=str(model_dir / "tiny-encoder.int8.onnx"),
-                    decoder=str(model_dir / "tiny-decoder.int8.onnx"),
-                    language="tr",
-                    task="transcribe",
-                    tail_paddings=64,
-                ),
-                tokens=str(model_dir / "tiny-tokens.txt"),
-                num_threads=2,
-                debug=False,
+
+        _log(f"Initializing STT from: {model_dir}")
+        model_config = sherpa_onnx.OfflineModelConfig(
+            whisper=sherpa_onnx.OfflineWhisperModelConfig(
+                encoder=str(model_dir / "tiny-encoder.int8.onnx"),
+                decoder=str(model_dir / "tiny-decoder.int8.onnx"),
+                language="tr",
+                task="transcribe",
+                tail_paddings=64,
             ),
-            decoding_method="greedy_search",
+            tokens=str(model_dir / "tiny-tokens.txt"),
+            num_threads=2,
+            debug=False,
         )
+
+        # API changed across sherpa-onnx versions:
+        # - some builds expect `model_config=`
+        # - older wrappers accepted `model=`
+        try:
+            config = sherpa_onnx.OfflineRecognizerConfig(
+                model_config=model_config,
+                decoding_method="greedy_search",
+            )
+        except TypeError:
+            _log("RecognizerConfig(model_config=...) unsupported, retrying with model=...")
+            config = sherpa_onnx.OfflineRecognizerConfig(
+                model=model_config,
+                decoding_method="greedy_search",
+            )
+
         if not config.validate():
             raise ValueError("STT model config invalid")
 
         self.recognizer = sherpa_onnx.OfflineRecognizer(config)
+        _log("✅ STT initialized")
 
     def _record_until_silence(
         self,
@@ -112,41 +143,58 @@ class LocalSTT:
     def listen_once(self) -> str:
         samples = self._record_until_silence()
         if samples.size < int(self.sample_rate * 0.4):
+            _log("🎙️ Input too short, skipping")
             return ""
 
         stream = self.recognizer.create_stream()
         stream.accept_waveform(self.sample_rate, samples)
         self.recognizer.decode_stream(stream)
-        return (stream.result.text or "").strip()
+        text = (stream.result.text or "").strip()
+        _log(f"📝 STT text: {text!r}")
+        return text
 
 
 class LocalTTS:
     def __init__(self, model_dir: Path):
-        config = sherpa_onnx.OfflineTtsConfig(
-            model=sherpa_onnx.OfflineTtsModelConfig(
-                vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-                    model=str(model_dir / "tr_TR-fahrettin-medium.onnx"),
-                    lexicon="",
-                    tokens=str(model_dir / "tokens.txt"),
-                    data_dir=str(model_dir / "espeak-ng-data"),
-                ),
-                num_threads=2,
-                debug=False,
+        _log(f"Initializing TTS from: {model_dir}")
+        tts_model_config = sherpa_onnx.OfflineTtsModelConfig(
+            vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                model=str(model_dir / "tr_TR-fahrettin-medium.onnx"),
+                lexicon="",
+                tokens=str(model_dir / "tokens.txt"),
+                data_dir=str(model_dir / "espeak-ng-data"),
             ),
-            max_num_sentences=2,
+            num_threads=2,
+            debug=False,
         )
+
+        try:
+            config = sherpa_onnx.OfflineTtsConfig(
+                model=tts_model_config,
+                max_num_sentences=2,
+            )
+        except TypeError:
+            _log("TtsConfig(model=...) unsupported, retrying with model_config=...")
+            config = sherpa_onnx.OfflineTtsConfig(
+                model_config=tts_model_config,
+                max_num_sentences=2,
+            )
+
         if not config.validate():
             raise ValueError("TTS model config invalid")
 
         self.tts = sherpa_onnx.OfflineTts(config)
+        _log("✅ TTS initialized")
 
     def synthesize(self, text: str, speed: float = 1.0) -> tuple[np.ndarray, int]:
         audio = self.tts.generate(text=text, sid=0, speed=speed)
         return np.asarray(audio.samples, dtype=np.float32), int(audio.sample_rate)
 
     def speak(self, text: str, speed: float = 1.0) -> None:
+        _log(f"🔊 TTS speak request ({len(text)} chars)")
         wav, sr = self.synthesize(text, speed=speed)
         if wav.size == 0:
+            _log("⚠️ Empty TTS output")
             return
         sd.play(wav, sr, blocking=True)
 
