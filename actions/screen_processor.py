@@ -60,15 +60,12 @@ SYSTEM_PROMPT = (
 
 
 def _get_api_key() -> str:
-    try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            keys = json.load(f)
-        key = (keys.get("vision_api_key") or keys.get("gemini_api_key") or "").strip()
-        if not key:
-            raise ValueError("vision_api_key not found")
-        return key
-    except Exception as e:
-        raise RuntimeError(f"Could not load API key: {e}")
+    from memory.config_manager import get_google_ai_key
+
+    key = get_google_ai_key()
+    if not key:
+        raise RuntimeError("vision_api_key/google_api_key not found in config/api_keys.json")
+    return key.strip()
 
 
 def _get_camera_index() -> int:

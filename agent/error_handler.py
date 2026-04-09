@@ -50,8 +50,12 @@ Return ONLY valid JSON:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from memory.config_manager import get_google_ai_key
+
+    key = get_google_ai_key()
+    if not key:
+        raise RuntimeError("google_api_key not found in config/api_keys.json")
+    return key
 
 
 def analyze_error(
