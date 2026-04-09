@@ -1,4 +1,5 @@
 import io
+import os
 import tarfile
 import time
 import urllib.request
@@ -17,7 +18,7 @@ def _log(msg: str) -> None:
 class ModelManager:
     ASR_URL = (
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
-        "sherpa-onnx-whisper-tiny.tar.bz2"
+        "sherpa-onnx-whisper-small.tar.bz2"
     )
     TTS_URL = (
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
@@ -45,8 +46,8 @@ class ModelManager:
         asr_root = self.models_dir / "asr"
         tts_root = self.models_dir / "tts"
 
-        asr_model_dir = asr_root / "sherpa-onnx-whisper-tiny"
-        if not (asr_model_dir / "tiny-encoder.int8.onnx").exists():
+        asr_model_dir = asr_root / "sherpa-onnx-whisper-small"
+        if not (asr_model_dir / "small-encoder.int8.onnx").exists():
             _log("ASR model missing, preparing download")
             self._download_and_extract(self.ASR_URL, asr_root)
         else:
@@ -63,29 +64,35 @@ class ModelManager:
 
 
 class LocalSTT:
-    def __init__(self, model_dir: Path, sample_rate: int = 16000):
+    def __init__(
+        self,
+        model_dir: Path,
+        sample_rate: int = 16000,
+        language: str | None = None,
+    ):
         self.sample_rate = sample_rate
+        self.language = (language or os.getenv("JARVIS_STT_LANGUAGE", "tr")).strip() or "tr"
 
         _log(f"Initializing STT from: {model_dir}")
         model_config = sherpa_onnx.OfflineModelConfig(
             whisper=sherpa_onnx.OfflineWhisperModelConfig(
-                encoder=str(model_dir / "tiny-encoder.int8.onnx"),
-                decoder=str(model_dir / "tiny-decoder.int8.onnx"),
-                language="tr",
+                encoder=str(model_dir / "small-encoder.int8.onnx"),
+                decoder=str(model_dir / "small-decoder.int8.onnx"),
+                language=self.language,
                 task="transcribe",
                 tail_paddings=64,
             ),
-            tokens=str(model_dir / "tiny-tokens.txt"),
+            tokens=str(model_dir / "small-tokens.txt"),
             num_threads=2,
             debug=False,
         )
 
         _ = model_config  # token/model path validation by explicit constructor below
         self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
-            encoder=str(model_dir / "tiny-encoder.int8.onnx"),
-            decoder=str(model_dir / "tiny-decoder.int8.onnx"),
-            tokens=str(model_dir / "tiny-tokens.txt"),
-            language="tr",
+            encoder=str(model_dir / "small-encoder.int8.onnx"),
+            decoder=str(model_dir / "small-decoder.int8.onnx"),
+            tokens=str(model_dir / "small-tokens.txt"),
+            language=self.language,
             task="transcribe",
             num_threads=2,
             provider="cpu",

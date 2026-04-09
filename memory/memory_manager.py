@@ -25,6 +25,15 @@ BASE_DIR         = get_base_dir()
 MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
 _lock            = Lock()
 MAX_VALUE_LENGTH = 400
+_MEMORY_AI_DISABLED_LOGGED = False
+
+
+def _load_memory_ai():
+    try:
+        import google.generativeai as genai
+        return genai
+    except Exception:
+        return None
 
 
 def _empty_memory() -> dict:
@@ -120,7 +129,13 @@ def should_extract_memory(user_text: str, jarvis_text: str, api_key: str) -> boo
     Öncekinden daha geniş kriterler — favori şeyler, projeler, arkadaşlar da dahil.
     """
     try:
-        import google.generativeai as genai
+        global _MEMORY_AI_DISABLED_LOGGED
+        genai = _load_memory_ai()
+        if genai is None:
+            if not _MEMORY_AI_DISABLED_LOGGED:
+                print("[Memory] Info: memory extraction AI backend unavailable, skipping.")
+                _MEMORY_AI_DISABLED_LOGGED = True
+            return False
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
@@ -148,7 +163,9 @@ def extract_memory(user_text: str, jarvis_text: str, api_key: str) -> dict:
     Stage 2: Detaylı çıkarım. Her iki tarafı da analiz eder.
     """
     try:
-        import google.generativeai as genai
+        genai = _load_memory_ai()
+        if genai is None:
+            return {}
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
