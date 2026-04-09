@@ -582,16 +582,16 @@ class JarvisUI:
         tk.Label(self.setup_frame, text="◈  INITIALISATION REQUIRED",
                  fg=C_PRI, bg="#00080d", font=("Courier", 13, "bold")).pack(pady=(18, 4))
         tk.Label(self.setup_frame,
-                 text="Enter your Gemini API key to boot J.A.R.V.I.S.",
+                 text="Enter your MiniMax API key to boot J.A.R.V.I.S.",
                  fg=C_MID, bg="#00080d", font=("Courier", 9)).pack(pady=(0, 10))
 
-        tk.Label(self.setup_frame, text="GEMINI API KEY",
+        tk.Label(self.setup_frame, text="MINIMAX API KEY",
                  fg=C_DIM, bg="#00080d", font=("Courier", 9)).pack(pady=(8, 2))
-        self.gemini_entry = tk.Entry(
+        self.minimax_entry = tk.Entry(
             self.setup_frame, width=52, fg=C_TEXT, bg="#000d12",
             insertbackground=C_TEXT, borderwidth=0, font=("Courier", 10), show="*"
         )
-        self.gemini_entry.pack(pady=(0, 4))
+        self.minimax_entry.pack(pady=(0, 4))
 
         tk.Button(
             self.setup_frame, text="▸  INITIALISE SYSTEMS",
@@ -601,12 +601,12 @@ class JarvisUI:
         ).pack(pady=14)
 
     def _save_api_keys(self):
-        gemini = self.gemini_entry.get().strip()
-        if not gemini:
+        minimax = self.minimax_entry.get().strip()
+        if not minimax:
             return
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(API_FILE, "w", encoding="utf-8") as f:
-            json.dump({"gemini_api_key": gemini}, f, indent=4)
+            json.dump({"minimax_api_key": minimax}, f, indent=4)
         self.setup_frame.destroy()
         self._api_key_ready = True
         self.set_state("LISTENING")

@@ -5,7 +5,7 @@
 ### Next-Generation Personal AI Assistant — By FatihMakes
 
 A real-time voice AI that can hear, see, understand, and control your Windows computer.
-Local execution. Zero subscriptions (unless you want to increase requests via Google AI Studio).
+Hybrid execution: local STT/TTS (sherpa-onnx) + MiniMax LLM API.
 Built for intelligent automation.
 ---
 ## ✨ Overview
@@ -49,7 +49,7 @@ playwright install
 python main.py
 ```
 
-Enter your free Gemini API key on first launch.
+Enter your MiniMax API key on first launch. The app downloads Turkish sherpa-onnx STT/TTS models automatically.
 System ready in minutes.
 ---
 ## 📋 Requirements
@@ -57,7 +57,7 @@ System ready in minutes.
 * Windows 10 / 11
 * Python 3.11 or 3.12
 * Microphone
-* Free [Gemini API key](https://aistudio.google.com/apikey)
+* MiniMax API key (create from MiniMax Console)
 ---
 ## ⚠️ License
 
